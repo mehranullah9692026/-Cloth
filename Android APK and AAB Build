@@ -1,0 +1,95 @@
+
+name: Build Cloth App APK and AAB
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloth-android-build
+  cancel-in-progress: false
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Detect project folder
+        shell: bash
+        run: |
+          if [ -f app/package.json ]; then
+            echo "APP_DIR=app" >> "$GITHUB_ENV"
+          elif [ -f package.json ]; then
+            echo "APP_DIR=." >> "$GITHUB_ENV"
+          else
+            echo "ERROR: package.json not found"
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install project dependencies
+        shell: bash
+        run: |
+          cd "$APP_DIR"
+          npm install --no-audit --no-fund
+
+      - name: Prepare Android platform
+        shell: bash
+        run: |
+          cd "$APP_DIR"
+
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+
+          npx cap sync android
+
+      - name: Build APK and AAB
+        shell: bash
+        run: |
+          cd "$APP_DIR/android"
+
+          chmod +x gradlew
+
+          ./gradlew --no-daemon clean assembleDebug bundleRelease
+
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+
+          cp app/build/outputs/apk/debug/*.apk \
+            "$GITHUB_WORKSPACE/dist/"
+
+          cp app/build/outputs/bundle/release/*.aab \
+            "$GITHUB_WORKSPACE/dist/"
+
+      - name: Upload APK and AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cloth-App-APK-AAB
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
